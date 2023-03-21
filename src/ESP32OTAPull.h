@@ -26,10 +26,18 @@ SOFTWARE.
 */
 
 #pragma once
-#include <HTTPClient.h>
+
 #include <ArduinoJson.h>
-#include <Update.h>
-#include <WiFi.h>
+
+#if defined(ESP32)
+  #include <WiFi.h>
+  #include <HTTPClient.h>
+  #include <Update.h>
+#elif defined(ESP8266)
+  #include <ESP8266WiFi.h>
+  #include <ESP8266HTTPClient.h>
+  #include "Updater.h"
+#endif
 
 class ESP32OTAPull
 {
@@ -41,6 +49,7 @@ public:
 
 private:
     void (*Callback)(int offset, int totallength) = NULL;
+	
     ActionType Action = UPDATE_AND_BOOT;
     String Board = ARDUINO_BOARD;
     String Device = "";
@@ -51,7 +60,8 @@ private:
     int DownloadJson(const char* URL, String& payload)
     {
         HTTPClient http;
-        http.begin(URL);
+		WiFiClient client;
+		http.begin(client, URL);
 
         // Send HTTP GET request
         int httpResponseCode = http.GET();
@@ -69,7 +79,8 @@ private:
     int DoOTAUpdate(const char* URL, ActionType Action)
     {
         HTTPClient http;
-        http.begin(URL);
+		WiFiClient client;
+		http.begin(client, URL);
 
         // Send HTTP GET request
         int httpResponseCode = http.GET();
@@ -79,9 +90,15 @@ private:
             int totalLength = http.getSize();
 
             // this is required to start firmware update process
-            if (!Update.begin(UPDATE_SIZE_UNKNOWN))
-                return OTA_UPDATE_FAIL;
-
+			#if defined(ESP32)
+              if (!Update.begin(UPDATE_SIZE_UNKNOWN))
+                  return OTA_UPDATE_FAIL;
+			#elif defined(ESP8266)
+              uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
+              if (!Update.begin(maxSketchSpace))   // start with max available size	
+				  return OTA_UPDATE_FAIL;
+			#endif			
+			
             // create buffer for read
             uint8_t buff[1280] = { 0 };
 
@@ -180,17 +197,17 @@ public:
     }
 
     /// @brief The main entry point for OTA Update
-    /// @param JSON_URL The URL for the JSON filter file
+    /// @param URL for the JSON filter file
     /// @param CurrentVersion The version # of the current (i.e. to be replaced) sketch
     /// @param ActionType The action to be performed.  May be any of DONT_DO_UPDATE, UPDATE_BUT_NO_BOOT, UPDATE_AND_BOOT (default)
     /// @return ErrorCode or HTTP failure code (see enum above)
-    int CheckForOTAUpdate(const char* JSON_URL, const char *CurrentVersion, ActionType Action = UPDATE_AND_BOOT)
+    int CheckForOTAUpdate(const char *URL, const char *CurrentVersion, ActionType Action = UPDATE_AND_BOOT)
     {
         CurrentVersion = CurrentVersion == NULL ? "" : CurrentVersion;
 
         // Downloading OTA Json...
         String Payload;
-        int httpResponseCode = DownloadJson(JSON_URL, Payload);
+        int httpResponseCode = DownloadJson(URL, Payload);
         if (httpResponseCode != 200)
             return httpResponseCode > 0 ? httpResponseCode : HTTP_FAILED;
 
